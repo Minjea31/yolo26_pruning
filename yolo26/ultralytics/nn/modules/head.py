@@ -232,6 +232,20 @@ class Detect(nn.Module):
         boxes = boxes.gather(dim=1, index=idx.repeat(1, 1, 4))
         return torch.cat([boxes, scores, conf], dim=-1)
 
+    def recon(self, detect_in_channels):
+        detect_out_channels = []
+        for i, detect_in in enumerate(detect_in_channels):
+
+            # self.cv2[i][0].conv.weight = torch.nn.parameter.Parameter(
+            #             torch.index_select(self.cv2[i][0].conv.weight, 1, torch.tensor(detect_in)))
+            self.cv2[i][0].conv.in_channels = len(detect_in)
+
+        for i, detect_in in enumerate(detect_in_channels):
+
+            # self.cv3[i][0][0].conv.weight = torch.nn.parameter.Parameter(
+            #             torch.index_select(self.cv3[i][0][0].conv.weight, 1, torch.tensor(detect_in)))
+            self.cv3[i][0][0].conv.in_channels = len(detect_in)
+
     def get_topk_index(self, scores: torch.Tensor, max_det: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Get top-k indices from scores.
 

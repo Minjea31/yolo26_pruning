@@ -221,6 +221,13 @@ class SPPF(nn.Module):
         Notes:
             This module is equivalent to SPP(k=(5, 9, 13)).
         """
+        self.c1 = c1
+        self.c2 = c2
+        self.k = k
+        self.n_arg = n
+        self.shortcut = shortcut
+
+
         super().__init__()
         c_ = c1 // 2  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1, act=False)
@@ -231,6 +238,7 @@ class SPPF(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply sequential pooling operations to input and return concatenated feature maps."""
+        # import pdb; pdb.set_trace()
         y = [self.cv1(x)]
         y.extend(self.m(y[-1]) for _ in range(getattr(self, "n", 3)))
         y = self.cv2(torch.cat(y, 1))
@@ -1126,8 +1134,8 @@ class C3k2(C2f):
         origin_offset = self.cv1.conv.weight.shape[0]
         offset = self.cv1.conv.weight.shape[0] // 2
         cv1_out_channels = self.cv1.get_remain_out_channels()
-        cv1_out_channels_1 = cv1_out_channels[:offset]
-        cv1_out_channels_2 = cv1_out_channels[offset:]
+        cv1_out_channels_1 = [x for x in cv1_out_channels if x < offset]
+        cv1_out_channels_2 = [x for x in cv1_out_channels if x >= offset]
         cv1_out_channels_2_offset = [x - offset for x in cv1_out_channels_2] # split하고 인덱스 0부터
         #self.c3k = False # 정의가 안되서 임의로 값 할당
         #split 후 분기
@@ -1163,16 +1171,67 @@ class C3k2(C2f):
 
         #bottleneck으로 분기
         else:
-            union_channels = cv1_out_channels_2_offset
-            for i in range(len(self.m)):
-                m_cv2_out_channels = self.m[i].cv2.get_remain_out_channels()
-                union_channels = list(set(union_channels + m_cv2_out_channels))
+            has_attn_block = any(
+                isinstance(block, torch.nn.Sequential)
+                and len(block) > 1
+                and block[1].__class__.__name__ == "PSABlock"
+                for block in self.m
+            )
+            union_channels = list(range(offset)) if has_attn_block else cv1_out_channels_2_offset
+            if has_attn_block:
+                cv1_out_channels_1 = list(range(offset))
+
+            # 1) Bottleneck 출력 채널 수집
+            if not has_attn_block:
+                for i in range(len(self.m)):
+                    block = self.m[i]
+
+                    # 기존 YOLOv12/일반 Bottleneck 구조
+                    if hasattr(block, "cv2"):
+                        m_cv2_out_channels = block.cv2.get_remain_out_channels()
+                        union_channels = list(set(union_channels + m_cv2_out_channels))
+
+                    # YOLOv26: Sequential(Bottleneck, PSABlock)
+                    elif isinstance(block, torch.nn.Sequential):
+                        bottleneck = block[0]
+                        if hasattr(bottleneck, "cv2"):
+                            m_cv2_out_channels = bottleneck.cv2.get_remain_out_channels()
+                            union_channels = list(set(union_channels + m_cv2_out_channels))
+
+            union_channels = sorted(union_channels)
+
+            # 2) C3k2 cv1 재구성
             cv1_out_channels_2_union = [x + offset for x in union_channels]
-            self.cv1.recon(remain_in_channels, cv1_out_channels_1 + cv1_out_channels_2_union)
+
+            self.cv1.recon(
+                remain_in_channels,
+                cv1_out_channels_1 + cv1_out_channels_2_union
+            )
+
             cv2_in_channels = cv1_out_channels_1 + cv1_out_channels_2_union
+
+            # 3) 내부 m 재구성
+            concat_channels = cv2_in_channels
+
             for i in range(len(self.m)):
-                self.m[i].recon(union_channels)
-                concat_channels = cv2_in_channels + [x + origin_offset + i * offset for x in union_channels]
+                block = self.m[i]
+
+                # 일반 Bottleneck
+                if hasattr(block, "recon"):
+                    block.recon(union_channels)
+
+                # Sequential(Bottleneck, PSABlock)
+                elif isinstance(block, torch.nn.Sequential):
+                    bottleneck = block[0]
+
+                    if hasattr(bottleneck, "recon"):
+                        bottleneck.recon(union_channels)
+
+                    # block[1] = PSABlock은 일단 그대로 둠
+
+                concat_channels = concat_channels + [
+                    x + origin_offset + i * offset for x in union_channels
+                ]
 
 
         cv2_out_channels = self.cv2.recon(concat_channels)
@@ -1541,6 +1600,12 @@ class C2PSA(nn.Module):
             n (int): Number of PSABlock modules.
             e (float): Expansion ratio.
         """
+
+        self.c1 = c1
+        self.c2 = c2
+        self.n = n
+        self.e = e
+
         super().__init__()
         assert c1 == c2
         self.c = int(c1 * e)
@@ -1558,25 +1623,27 @@ class C2PSA(nn.Module):
         Returns:
             (torch.Tensor): Output tensor after processing.
         """
+        # import pdb; pdb.set_trace()
         a, b = self.cv1(x).split((self.c, self.c), dim=1)
         b = self.m(b)
+        # import pdb; pdb.set_trace()
         return self.cv2(torch.cat((a, b), 1))
     
     
-    def recon(self, remain_in_channels, c1, e):
-        ori_num_heads = int(c1 * e) // 64
+    def recon(self, remain_in_channels):
         cv1_offset = self.cv1.conv.weight.shape[0] // 2
         cv1_out_channels = self.cv1.get_remain_out_channels()
-        self.cv1.conv(remain_in_channels, cv1_out_channels)
+        self.cv1.recon(remain_in_channels, cv1_out_channels)
 
-        cv1_out_channels_1 = cv1_out_channels[:cv1_offset]
-        cv1_out_channels_2 = cv1_out_channels[cv1_offset:]
+        cv1_out_channels_1 = [x for x in cv1_out_channels if x < cv1_offset]
+        cv1_out_channels_2 = [x for x in cv1_out_channels if x >= cv1_offset]
         cv1_out_channels_2_offset = [x - cv1_offset for x in cv1_out_channels_2]
         # cv1_out_channels_2_offset 이게 PSABlock으로 들어감.
 
+        input_attn = cv1_out_channels_2_offset
         for i in range(len(self.m)):
-            input_attn = cv1_out_channels_2_offset
-            PSABlock_attn_out_channel = self.m[i].attn(input_attn) # 일단 Atteontion은 안함. 근데 input channel 맞춰줘야할듯.
+            PSABlock_attn_out_channel = input_attn
+            # PSABlock_attn_out_channel = self.m[i].attn(input_attn) # 일단 Attention은 안함. 근데 input channel 맞춰줘야할듯.
             PSABlock_attn_shortcut = list(set(input_attn + PSABlock_attn_out_channel)) # shortcut 연산
             ffn_0_out_channels = self.m[i].ffn[0].get_remain_out_channels()
             self.m[i].ffn[0].recon(PSABlock_attn_shortcut, ffn_0_out_channels)
@@ -1588,6 +1655,8 @@ class C2PSA(nn.Module):
         concat_channels = cv1_out_channels_1 + [(x + cv1_offset) for x in output_PSABlock_channels]
         cv2_out_channels = self.cv2.get_remain_out_channels()
         self.cv2.recon(concat_channels, cv2_out_channels)
+
+        return cv2_out_channels
         
 
 

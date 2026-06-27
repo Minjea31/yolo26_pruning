@@ -1,13 +1,12 @@
 import sys
-sys.path.append("/home/yjlee/ultralytics")
 from ultralytics import YOLO
 import argparse
 
 if __name__=="__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default='./weights/yolov8n.pt')
-    parser.add_argument('--data', type=str, default="./datasets/KITTI-3/data.yaml")
+    parser.add_argument("--model", type=str, default='../test_model.pt')
+    parser.add_argument('--data', type=str, default="../dataset.yaml")
 
     args = parser.parse_args()
 

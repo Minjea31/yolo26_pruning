@@ -1946,8 +1946,12 @@ def parse_model(d, ch, verbose=True):
             args = [*args[1:]]
         else:
             c2 = ch[f]
+        # print(f"[BUILD BEFORE] i={i}, from={f}, n={n}, module={m}, args={args}", flush=True)
 
         m_ = torch.nn.Sequential(*(m(*args) for _ in range(n))) if n > 1 else m(*args)  # module
+        
+        # print(f"[BUILD AFTER ] i={i}, module={m_.__class__.__name__}", flush=True)
+
         t = str(m)[8:-2].replace("__main__.", "")  # module type
         m_.np = sum(x.numel() for x in m_.parameters())  # number params
         m_.i, m_.f, m_.type = i, f, t  # attach index, 'from' index, type
