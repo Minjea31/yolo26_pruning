@@ -247,21 +247,23 @@ class PruneHandler():
                 else:
                     yaml_dict["backbone"].append(layer)
 
-            elif isinstance(module, C2PSA):
-                # import pdb; pdb.set_trace()
-
-                args = [module.cv2.conv.out_channels]
-                layer = [from_, len(module.m), type(module).__name__, args]
-                yaml_dict["backbone"].append(layer)
-
+            
             elif isinstance(module, SPPF):
                 k = 5
-                n = 3
-                shortcut = True
+                c2 = module.cv2.conv.out_channels
+                c2 = max(c2, 128)
 
-                args = [module.cv2.conv.out_channels, k, n, shortcut]
+                args = [c2, k]
                 layer = [from_, repeats, type(module).__name__, args]
+                yaml_dict["backbone"].append(layer)
 
+            
+            elif isinstance(module, C2PSA):
+                c2 = module.cv2.conv.out_channels
+                c2 = max(c2, 128)
+
+                args = [c2]
+                layer = [from_, len(module.m), type(module).__name__, args]
                 yaml_dict["backbone"].append(layer)
 
             elif isinstance(module, Detect):
