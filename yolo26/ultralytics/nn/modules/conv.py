@@ -89,21 +89,35 @@ class Conv(nn.Module):
         return self.act(self.conv(x))
 
     def recon(self, remain_in_channels, remain_out_channels=None, ones=False):
+        remain_in_channels = [int(x) for x in remain_in_channels]
+        is_depthwise = self.conv.groups == self.conv.in_channels == self.conv.out_channels and self.conv.weight.shape[1] == 1
         if remain_out_channels == None:
             remain_out_channels = torch.where(torch.norm(self.conv.weight, p=2, dim=(1, 2, 3)) != 0)[0].tolist()
 
-            self.conv.weight = torch.nn.parameter.Parameter(torch.index_select(self.conv.weight, 0, torch.tensor(remain_out_channels)))
+            idx_out = torch.tensor(remain_out_channels, dtype=torch.long, device=self.conv.weight.device)
+            idx_in = torch.tensor(remain_in_channels, dtype=torch.long, device=self.conv.weight.device)
+            selected_weight = torch.index_select(self.conv.weight, 0, idx_out)
+            if self.conv.weight.shape[1] != 1:
+                selected_weight = torch.index_select(selected_weight, 1, idx_in)
+            self.conv.weight = torch.nn.parameter.Parameter(selected_weight)
             self.conv.in_channels = len(remain_in_channels)
             self.conv.out_channels = len(remain_out_channels)
-            self.bn.weight = torch.nn.parameter.Parameter(torch.index_select(self.bn.weight, 0, torch.tensor(remain_out_channels)))
-            self.bn.bias = torch.nn.parameter.Parameter(torch.index_select(self.bn.bias, 0, torch.tensor(remain_out_channels)))
-            self.bn.running_mean = torch.index_select(self.bn.running_mean, 0, torch.tensor(remain_out_channels))
-            self.bn.running_var = torch.index_select(self.bn.running_var, 0, torch.tensor(remain_out_channels))
+            if is_depthwise:
+                self.conv.groups = len(remain_out_channels)
+            self.bn.weight = torch.nn.parameter.Parameter(torch.index_select(self.bn.weight, 0, idx_out))
+            self.bn.bias = torch.nn.parameter.Parameter(torch.index_select(self.bn.bias, 0, idx_out))
+            self.bn.running_mean = torch.index_select(self.bn.running_mean, 0, idx_out)
+            self.bn.running_var = torch.index_select(self.bn.running_var, 0, idx_out)
             self.bn.num_features = len(remain_out_channels)
         else:
+            remain_out_channels = [int(x) for x in remain_out_channels]
+            idx_out = torch.tensor(remain_out_channels, dtype=torch.long, device=self.conv.weight.device)
+            idx_in = torch.tensor(remain_in_channels, dtype=torch.long, device=self.conv.weight.device)
 
             if ones:
-                selected_weights = torch.index_select(self.conv.weight, 0, torch.tensor(remain_out_channels))
+                selected_weights = torch.index_select(self.conv.weight, 0, idx_out)
+                if self.conv.weight.shape[1] != 1:
+                    selected_weights = torch.index_select(selected_weights, 1, idx_in)
 
                 # 모든 값이 0인 채널을 1로 수정
                 for i in range(selected_weights.size(0)):
@@ -111,16 +125,18 @@ class Conv(nn.Module):
                         selected_weights[i] = torch.ones_like(selected_weights[i])
                 self.conv.weight = torch.nn.Parameter(selected_weights)
             else:
-                self.conv.weight = torch.nn.parameter.Parameter(
-                    torch.index_select(self.conv.weight, 0, torch.tensor(remain_out_channels)))
+                selected_weight = torch.index_select(self.conv.weight, 0, idx_out)
+                if self.conv.weight.shape[1] != 1:
+                    selected_weight = torch.index_select(selected_weight, 1, idx_in)
+                self.conv.weight = torch.nn.parameter.Parameter(selected_weight)
             self.conv.in_channels = len(remain_in_channels)
             self.conv.out_channels = len(remain_out_channels)
+            if is_depthwise:
+                self.conv.groups = len(remain_out_channels)
             if ones:
-                selected_indices = torch.tensor(remain_out_channels)
-
                 # 선택된 weight와 bias
-                selected_weight = torch.index_select(self.bn.weight, 0, selected_indices)
-                selected_bias = torch.index_select(self.bn.bias, 0, selected_indices)
+                selected_weight = torch.index_select(self.bn.weight, 0, idx_out)
+                selected_bias = torch.index_select(self.bn.bias, 0, idx_out)
 
                 # 0으로만 된 값이 있다면 1.0으로 대체
                 selected_weight = torch.where(selected_weight == 0, torch.ones_like(selected_weight), selected_weight)
@@ -131,11 +147,11 @@ class Conv(nn.Module):
                 self.bn.bias = torch.nn.Parameter(selected_bias)
             else:
                 self.bn.weight = torch.nn.parameter.Parameter(
-                    torch.index_select(self.bn.weight, 0, torch.tensor(remain_out_channels)))
+                    torch.index_select(self.bn.weight, 0, idx_out))
                 self.bn.bias = torch.nn.parameter.Parameter(
-                    torch.index_select(self.bn.bias, 0, torch.tensor(remain_out_channels)))
-            self.bn.running_mean = torch.index_select(self.bn.running_mean, 0, torch.tensor(remain_out_channels))
-            self.bn.running_var = torch.index_select(self.bn.running_var, 0, torch.tensor(remain_out_channels))
+                    torch.index_select(self.bn.bias, 0, idx_out))
+            self.bn.running_mean = torch.index_select(self.bn.running_mean, 0, idx_out)
+            self.bn.running_var = torch.index_select(self.bn.running_var, 0, idx_out)
             self.bn.num_features = len(remain_out_channels)
 
         return remain_out_channels

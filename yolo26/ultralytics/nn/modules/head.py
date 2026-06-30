@@ -233,18 +233,32 @@ class Detect(nn.Module):
         return torch.cat([boxes, scores, conf], dim=-1)
 
     def recon(self, detect_in_channels):
-        detect_out_channels = []
+        def recon_first_conv(conv_module, detect_in):
+            idx = torch.tensor(detect_in, dtype=torch.long, device=conv_module.conv.weight.device)
+            conv_module.conv.weight = torch.nn.Parameter(torch.index_select(conv_module.conv.weight, 1, idx))
+            conv_module.conv.in_channels = idx.numel()
+
+        def recon_first_dwconv(branch, detect_in):
+            dw, pw = branch[0], branch[1]
+            idx = torch.tensor(detect_in, dtype=torch.long, device=dw.conv.weight.device)
+            dw.conv.weight = torch.nn.Parameter(torch.index_select(dw.conv.weight, 0, idx))
+            dw.conv.in_channels = idx.numel()
+            dw.conv.out_channels = idx.numel()
+            dw.conv.groups = idx.numel()
+            dw.bn.weight = torch.nn.Parameter(torch.index_select(dw.bn.weight, 0, idx))
+            dw.bn.bias = torch.nn.Parameter(torch.index_select(dw.bn.bias, 0, idx))
+            dw.bn.running_mean = torch.index_select(dw.bn.running_mean, 0, idx)
+            dw.bn.running_var = torch.index_select(dw.bn.running_var, 0, idx)
+            dw.bn.num_features = idx.numel()
+            pw.conv.weight = torch.nn.Parameter(torch.index_select(pw.conv.weight, 1, idx))
+            pw.conv.in_channels = idx.numel()
+
         for i, detect_in in enumerate(detect_in_channels):
-
-            # self.cv2[i][0].conv.weight = torch.nn.parameter.Parameter(
-            #             torch.index_select(self.cv2[i][0].conv.weight, 1, torch.tensor(detect_in)))
-            self.cv2[i][0].conv.in_channels = len(detect_in)
-
-        for i, detect_in in enumerate(detect_in_channels):
-
-            # self.cv3[i][0][0].conv.weight = torch.nn.parameter.Parameter(
-            #             torch.index_select(self.cv3[i][0][0].conv.weight, 1, torch.tensor(detect_in)))
-            self.cv3[i][0][0].conv.in_channels = len(detect_in)
+            recon_first_conv(self.cv2[i][0], detect_in)
+            recon_first_dwconv(self.cv3[i][0], detect_in)
+            if self.end2end:
+                recon_first_conv(self.one2one_cv2[i][0], detect_in)
+                recon_first_dwconv(self.one2one_cv3[i][0], detect_in)
 
     def get_topk_index(self, scores: torch.Tensor, max_det: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Get top-k indices from scores.

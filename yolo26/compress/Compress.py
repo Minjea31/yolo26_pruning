@@ -210,6 +210,7 @@ class PruneHandler():
         yaml_dict["nc"] = 8
         yaml_dict["end2end"] = detect.end2end
         yaml_dict["reg_max"] = detect.reg_max
+        yaml_dict["exact_channels"] = True
         yaml_dict["scales"] = {'prune': [1, 1, 1024]}
         yaml_dict["backbone"] = []
         yaml_dict["head"] = []
@@ -297,9 +298,13 @@ class PruneHandler():
         start = time.time()
         self.prune()
         self.reconstruct()
-        torch.save(self.model, f'./{self.cfg_output_path}/best_model_prune.pt')
         self.model_to_yaml()
+        for p in self.model.model.parameters():
+            if p.dtype.is_floating_point:
+                p.requires_grad = True
+        self.model.model._use_current_model_for_train = True
+        self.model.save(f'./{self.cfg_output_path}/best_model_prune.pt')
         print('Done')
         # import pdb; pdb.set_trace()
         print(f'time : {time.time() - start}')
-        return YOLO(f'./{self.cfg_output_path}/best_model_prune.yaml').load(f'./{self.cfg_output_path}/best_model_prune.pt')
+        return self.model

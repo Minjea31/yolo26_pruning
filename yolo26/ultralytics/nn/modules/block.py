@@ -1142,9 +1142,11 @@ class C3k2(C2f):
         #C3k로 분기
 
         if c3k:
+            c3k_in_channels = sorted(set(cv1_out_channels_1 + cv1_out_channels_2_offset))
+            self.cv1.recon(remain_in_channels, c3k_in_channels + [offset + x for x in c3k_in_channels])
             #import pdb; pdb.set_trace()
-            c3k_in_channels = cv1_out_channels_2_offset
             # C3k2의 m
+            c3k_outputs = []
             for i in range(len(self.m)):
                 c3k_cv1_offset = self.m[i].cv1.conv.weight.shape[0]
                 c3k_cv1_out_channels = self.m[i].cv1.get_remain_out_channels() # 앞부분의 out_channel
@@ -1155,16 +1157,16 @@ class C3k2(C2f):
                     bottleneck_cv2_out_channels = self.m[i].m[j].cv2.get_remain_out_channels() # bottleneck의 out channel
                     union_channels = list(set(union_channels + bottleneck_cv2_out_channels)) # shortcut 계산 (bottleneck 입력 + bottleneck 출력)
                 # c3k_bottleneck_offset = len(c3k_cv1_out_channels)
-                self.m[i].cv1.recon(cv1_out_channels_2_offset, union_channels) #cv1의 recon
-                cv2_out_remain=self.m[i].cv2.recon(cv1_out_channels_2) #cv2의 recon
-                cv2_out_remain = [c3k_cv1_offset*len(self.m[i].m) + x for x in cv2_out_remain] # concat 하기 위해 cv2의 결과의 인덱스를 뒤로 보냄
-                cv2_bottleneck_out = []
+                self.m[i].cv1.recon(c3k_in_channels, union_channels) #cv1의 recon
+                cv2_out_remain=self.m[i].cv2.recon(c3k_in_channels) #cv2의 recon
                 for j in range(len(self.m[i].m)):
-                    cv2_bottleneck_out_channels = self.m[i].m[j].cv2.recon(union_channels)
-                    cv2_bottleneck_out = cv2_bottleneck_out + [x + (j * c3k_cv1_offset) for x in cv2_bottleneck_out_channels]
-                cv2_bottleneck_out_union = cv2_bottleneck_out + cv2_out_remain
+                    union_channels = self.m[i].m[j].recon(union_channels)
+                cv2_bottleneck_out_union = union_channels + [c3k_cv1_offset + x for x in cv2_out_remain]
                 c3k_out_channels = self.m[i].cv3.recon(cv2_bottleneck_out_union)
-            concat_channels = cv1_out_channels_1 + [offset + x for x in c3k_out_channels]
+                c3k_outputs.append(c3k_out_channels)
+            concat_channels = c3k_in_channels + [offset + x for x in c3k_in_channels]
+            for i, c3k_out_channels in enumerate(c3k_outputs):
+                concat_channels = concat_channels + [origin_offset + i * offset + x for x in c3k_out_channels]
 
         
                 
@@ -1201,6 +1203,7 @@ class C3k2(C2f):
             union_channels = sorted(union_channels)
 
             # 2) C3k2 cv1 재구성
+            cv1_out_channels_1 = union_channels
             cv1_out_channels_2_union = [x + offset for x in union_channels]
 
             self.cv1.recon(
@@ -1632,27 +1635,10 @@ class C2PSA(nn.Module):
     
     def recon(self, remain_in_channels):
         cv1_offset = self.cv1.conv.weight.shape[0] // 2
-        cv1_out_channels = self.cv1.get_remain_out_channels()
-        self.cv1.recon(remain_in_channels, cv1_out_channels)
-
-        cv1_out_channels_1 = [x for x in cv1_out_channels if x < cv1_offset]
-        cv1_out_channels_2 = [x for x in cv1_out_channels if x >= cv1_offset]
-        cv1_out_channels_2_offset = [x - cv1_offset for x in cv1_out_channels_2]
-        # cv1_out_channels_2_offset 이게 PSABlock으로 들어감.
-
-        input_attn = cv1_out_channels_2_offset
-        for i in range(len(self.m)):
-            PSABlock_attn_out_channel = input_attn
-            # PSABlock_attn_out_channel = self.m[i].attn(input_attn) # 일단 Attention은 안함. 근데 input channel 맞춰줘야할듯.
-            PSABlock_attn_shortcut = list(set(input_attn + PSABlock_attn_out_channel)) # shortcut 연산
-            ffn_0_out_channels = self.m[i].ffn[0].get_remain_out_channels()
-            self.m[i].ffn[0].recon(PSABlock_attn_shortcut, ffn_0_out_channels)
-            ffn_1_out_channels = self.m[i].ffn[1].get_remain_out_channels()
-            self.m[i].ffn[1].recon(ffn_0_out_channels, ffn_1_out_channels)
-            input_attn = list(set(PSABlock_attn_shortcut + ffn_1_out_channels))
-
-        output_PSABlock_channels = input_attn
-        concat_channels = cv1_out_channels_1 + [(x + cv1_offset) for x in output_PSABlock_channels]
+        input_attn = list(range(cv1_offset))
+        self.cv1.recon(remain_in_channels, input_attn + [cv1_offset + x for x in input_attn])
+        self.c = len(input_attn)
+        concat_channels = input_attn + [(x + cv1_offset) for x in input_attn]
         cv2_out_channels = self.cv2.get_remain_out_channels()
         self.cv2.recon(concat_channels, cv2_out_channels)
 

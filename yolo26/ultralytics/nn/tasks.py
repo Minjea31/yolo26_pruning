@@ -1776,6 +1776,7 @@ def parse_model(d, ch, verbose=True):
     legacy = True  # backward compatibility for v3/v5/v8/v9 models
     max_channels = float("inf")
     nc, act, scales, end2end = (d.get(x) for x in ("nc", "activation", "scales", "end2end"))
+    exact_channels = d.get("exact_channels", False)
     reg_max = d.get("reg_max", 16)
     depth, width, kpt_shape = (d.get(x, 1.0) for x in ("depth_multiple", "width_multiple", "kpt_shape"))
     scale = d.get("scale")
@@ -1873,7 +1874,7 @@ def parse_model(d, ch, verbose=True):
         if m in base_modules:
             c1, c2 = ch[f], args[0]
             if c2 != nc:  # if c2 != nc (e.g., Classify() output)
-                c2 = make_divisible(min(c2, max_channels) * width, 8)
+                c2 = int(c2) if exact_channels else make_divisible(min(c2, max_channels) * width, 8)
             if m is C2fAttn:  # set 1) embed channels and 2) num heads
                 args[1] = make_divisible(min(args[1], max_channels // 2) * width, 8)
                 args[2] = int(max(round(min(args[2], max_channels // 2 // 32)) * width, 1) if args[2] > 1 else args[2])
@@ -1923,7 +1924,7 @@ def parse_model(d, ch, verbose=True):
         ):
             args.extend([reg_max, end2end, [ch[x] for x in f]])
             if m is Segment or m is YOLOESegment or m is Segment26 or m is YOLOESegment26:
-                args[2] = make_divisible(min(args[2], max_channels) * width, 8)
+                args[2] = int(args[2]) if exact_channels else make_divisible(min(args[2], max_channels) * width, 8)
             if m in {Detect, YOLOEDetect, Segment, Segment26, YOLOESegment, YOLOESegment26, Pose, Pose26, OBB, OBB26}:
                 m.legacy = legacy
         elif m is SemanticSegment:

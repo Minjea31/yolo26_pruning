@@ -345,6 +345,51 @@ class Model(torch.nn.Module):
             p.requires_grad = True
         return self
 
+    def _log_current_model_table(self) -> None:
+        """Log a parse_model-like summary for an already-built model."""
+        if RANK not in {-1, 0} or not hasattr(self.model, "model"):
+            return
+        LOGGER.info(f"\n{'':>3}{'from':>20}{'n':>3}{'params':>10}  {'module':<45}{'arguments':<30}")
+        for i, m in enumerate(self.model.model):
+            f = getattr(m, "f", -1)
+            n = len(m) if isinstance(m, torch.nn.Sequential) else 1
+            p = sum(x.numel() for x in m.parameters())
+            t = getattr(m, "type", f"{m.__module__}.{m.__class__.__name__}")
+            args = []
+            if hasattr(m, "conv") and hasattr(m.conv, "kernel_size"):
+                args = [m.conv.in_channels, m.conv.out_channels, m.conv.kernel_size[0], m.conv.stride[0]]
+            elif m.__class__.__name__ == "C3k2":
+                first = m.m[0] if len(m.m) else None
+                c3k = first.__class__.__name__ == "C3k"
+                attn = (
+                    isinstance(first, torch.nn.Sequential)
+                    and len(first) > 1
+                    and first[1].__class__.__name__ == "PSABlock"
+                )
+                args = [m.cv1.conv.in_channels, m.cv2.conv.out_channels, len(m.m), c3k]
+                if hasattr(m, "c") and m.cv2.conv.out_channels:
+                    args.append(round(m.c / m.cv2.conv.out_channels, 3))
+                if attn:
+                    args.append(True)
+            elif m.__class__.__name__ == "SPPF":
+                args = [
+                    m.cv1.conv.in_channels,
+                    m.cv2.conv.out_channels,
+                    getattr(m, "k", m.m.kernel_size),
+                    getattr(m, "n", 3),
+                    getattr(m, "shortcut", getattr(m, "add", False)),
+                ]
+            elif m.__class__.__name__ == "C2PSA":
+                args = [m.cv1.conv.in_channels, m.cv2.conv.out_channels, len(m.m)]
+            elif m.__class__.__name__ == "Concat":
+                args = [getattr(m, "d", 1)]
+            elif isinstance(m, torch.nn.Upsample):
+                args = [None, m.scale_factor, m.mode]
+            elif hasattr(m, "nc") and hasattr(m, "reg_max") and hasattr(m, "nl"):
+                ch = [m.cv2[j][0].conv.in_channels for j in range(m.nl)]
+                args = [m.nc, m.reg_max, m.end2end, ch]
+            LOGGER.info(f"{i:>3}{str(f):>20}{n:>3}{p:10.0f}  {t:<45}{str(args):<30}")
+
     def load(self, weights: str | Path = "yolo26n.pt") -> Model:
         """Load parameters from the specified weights file into the model.
 
@@ -792,7 +837,11 @@ class Model(torch.nn.Module):
                     args["resume"] = False
 
         self.trainer = (trainer or self._smart_load("trainer"))(overrides=args, _callbacks=self.callbacks)
-        if not args.get("resume") and self.ckpt:
+        if not args.get("resume") and getattr(self.model, "_use_current_model_for_train", False):
+            self.trainer.model = self.model
+            self._log_current_model_table()
+            self.model.info(verbose=RANK in {-1, 0})
+        elif not args.get("resume") and self.ckpt:
             # Reuse the already-loaded checkpoint model to avoid re-resolving remote weight sources during trainer setup.
             weights = None if pretrained is False else self.model
             if isinstance(pretrained, (str, Path)):
