@@ -18,7 +18,7 @@ parser.add_argument("--device", type=str, default='0')
 
 args = parser.parse_args()
 project_dir = Path(__file__).resolve().parent / "checkpoints"
-pruning_ratio = 1 - math.sqrt(1 - args.pruning_ratio) # in과 out을 다 자르기 때문에 a^2 형태로 비율이 들어가게 됨
+pruning_ratio = 1 - math.sqrt(1 - args.pruning_ratio) # in과 out을 다 자르기 때문에 a^2 형태로 비율이 들어가게 됨.
 
 if not args.resume_path:
     bigmodel = YOLO(args.bmodel)
