@@ -5,16 +5,17 @@ from pathlib import Path
 import math
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--bmodel', type=str, default='../test_model.pt')
+parser.add_argument('--bmodel', type=str, default='/home/a/hackathon_ws/src/yolo_ws/models/baseline.pt')
 parser.add_argument('--pruning_ratio', type=float, default='0.5') # 몇 %를 자를건지
 parser.add_argument('--prune_type', type=str, default='ALL', help="H or B or ALL")
-parser.add_argument('--method', type=str, default='L2', help="L1 or L2 or GM")
+parser.add_argument('--method', type=str, default='GM', help="L1 or L2 or GM")
 parser.add_argument('--cfg_output_path', type=str, default='prune')
-parser.add_argument('--epoch', type=int, default=100)
-parser.add_argument('--name', type=str, default='test')
-parser.add_argument('--bs', type=int, default=2)
+parser.add_argument('--epoch', type=int, default=600)
+parser.add_argument('--name', type=str, default='prune_model')
+parser.add_argument('--bs', type=int, default=4)
 parser.add_argument('--resume_path', type=str)
 parser.add_argument("--device", type=str, default='0')
+parser.add_argument('--data', type=str, default=str(Path(__file__).resolve().parents[1] / 'hackathon.yaml'))
 
 args = parser.parse_args()
 project_dir = Path(__file__).resolve().parent / "checkpoints"
@@ -25,10 +26,10 @@ if not args.resume_path:
     ph = ph(bigmodel, pruning_ratio, args.method, args.cfg_output_path, args.prune_type)
     cmodel = ph.compress_yolo26()
 
-    cmodel.train(data="../dataset.yaml", epochs=args.epoch, imgsz=640, resume=False,
+    cmodel.train(data=args.data, epochs=args.epoch, imgsz=640, resume=False,
                  device=args.device, name=args.name, batch=args.bs, workers=4,
                  project=str(project_dir))
 else:
     cmodel = YOLO(args.resume_path)
-    cmodel.train(data="../dataset.yaml", epochs=50, imgsz=640, device=args.device, name=args.name, batch=args.bs, workers=4, 
+    cmodel.train(data=args.data, epochs=50, imgsz=640, device=args.device, name=args.name, batch=args.bs, workers=4,
                  resume=True, project=str(project_dir))

@@ -5,11 +5,11 @@ from pathlib import Path
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--name', type=str, default='baseline')
-parser.add_argument('--bs', type=int, default=2)
-parser.add_argument('--epoch', type=int, default=100)
+parser.add_argument('--bs', type=int, default=4)
+parser.add_argument('--epoch', type=int, default=600)
 parser.add_argument('--model_pt', type=str, default='../yolo26n.pt')
 parser.add_argument('--resume', action='store_true')
-parser.add_argument('--data', type=str, default="../dataset.yaml")
+parser.add_argument('--data', type=str, default="../hackathon.yaml")
 parser.add_argument("--device", type=str, default='0')
 
 args = parser.parse_args()

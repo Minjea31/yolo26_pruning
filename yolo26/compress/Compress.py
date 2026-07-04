@@ -33,11 +33,11 @@ class PruneHandler():
                     if not in_layers(name, detect_layers):
                         if isinstance(module, nn.Conv2d):
                             GM.gm_structured(module, name='weight', amount=self.cr, dim=0)
-                            mask = torch.norm(module.weight_mask, 1, dim=(1, 2, 3))
+                            mask = torch.where(torch.norm(module.weight_mask, 1, dim=(1, 2, 3)) != 0, 1, 0)
                             prune.remove(module, 'weight')
                         if isinstance(module, nn.BatchNorm2d):
-                            prune.l1_unstructured(module, name='weight', amount=self.cr, importance_scores=mask)
-                            prune.l1_unstructured(module, name='bias', amount=self.cr, importance_scores=mask)
+                            prune.custom_from_mask(module, name='weight', mask=mask)
+                            prune.custom_from_mask(module, name='bias', mask=mask)
                             prune.remove(module, 'weight')
                             prune.remove(module, 'bias')
             elif self.prune_type == 'H':
@@ -45,11 +45,11 @@ class PruneHandler():
                     if not in_layers(name, backbone_layers + detect_layers):
                         if isinstance(module, torch.nn.Conv2d):
                             GM.gm_structured(module, name='weight', amount=self.cr, dim=0)
-                            mask = torch.norm(module.weight_mask, 1, dim=(1, 2, 3))
+                            mask = torch.where(torch.norm(module.weight_mask, 1, dim=(1, 2, 3)) != 0, 1, 0)
                             prune.remove(module, 'weight')
                         elif isinstance(module, torch.nn.BatchNorm2d):
-                            prune.l1_unstructured(module, name='weight', amount=self.cr, importance_scores=mask)
-                            prune.l1_unstructured(module, name='bias', amount=self.cr, importance_scores=mask)
+                            prune.custom_from_mask(module, name='weight', mask=mask)
+                            prune.custom_from_mask(module, name='bias', mask=mask)
                             prune.remove(module, 'weight')
                             prune.remove(module, 'bias')
             elif self.prune_type == 'B':
@@ -57,11 +57,11 @@ class PruneHandler():
                     if in_layers(name, backbone_layers):
                         if isinstance(module, torch.nn.Conv2d):
                             GM.gm_structured(module, name='weight', amount=self.cr, dim=0)
-                            mask = torch.norm(module.weight_mask, 1, dim=(1, 2, 3))
+                            mask = torch.where(torch.norm(module.weight_mask, 1, dim=(1, 2, 3)) != 0, 1, 0)
                             prune.remove(module, 'weight')
                         elif isinstance(module, torch.nn.BatchNorm2d):
-                            prune.l1_unstructured(module, name='weight', amount=self.cr, importance_scores=mask)
-                            prune.l1_unstructured(module, name='bias', amount=self.cr, importance_scores=mask)
+                            prune.custom_from_mask(module, name='weight', mask=mask)
+                            prune.custom_from_mask(module, name='bias', mask=mask)
                             prune.remove(module, 'weight')
                             prune.remove(module, 'bias')
 
