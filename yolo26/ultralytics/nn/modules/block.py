@@ -251,7 +251,11 @@ class SPPF(nn.Module):
         cv2_in_channels_2 = [x + offset for x in cv2_in_channels_1]
         cv2_in_channels_3 = [x + offset for x in cv2_in_channels_2]
         cv2_in_channels = cv1_out_channels + cv2_in_channels_1 + cv2_in_channels_2 + cv2_in_channels_3
-        cv2_out_channels = self.cv2.recon(cv2_in_channels)
+        if getattr(self, "add", False):
+            # residual(y + x): cv2 출력 채널을 입력 채널과 정렬해야 함 (아니면 잔차 덧셈이 뒤섞임)
+            cv2_out_channels = self.cv2.recon(cv2_in_channels, remain_in_channels)
+        else:
+            cv2_out_channels = self.cv2.recon(cv2_in_channels)
         return cv2_out_channels
 
 
@@ -1179,7 +1183,8 @@ class C3k2(C2f):
                 and block[1].__class__.__name__ == "PSABlock"
                 for block in self.m
             )
-            union_channels = list(range(offset)) if has_attn_block else cv1_out_channels_2_offset
+            # union 에 첫 half(a)의 생존 채널까지 포함해야 chunk 분할 시 a의 살아있는 채널이 버려지지 않음
+            union_channels = list(range(offset)) if has_attn_block else (cv1_out_channels_1 + cv1_out_channels_2_offset)
             if has_attn_block:
                 cv1_out_channels_1 = list(range(offset))
 
@@ -1237,6 +1242,9 @@ class C3k2(C2f):
                 ]
 
 
+        # 프루닝 후 cv1 출력 채널이 줄었으므로 split half 크기 self.c 를 실제 값으로 갱신
+        # (forward_split / export 경로가 self.c 로 split 하므로 미갱신 시 채널 mismatch 발생)
+        self.c = self.cv1.conv.out_channels // 2
         cv2_out_channels = self.cv2.recon(concat_channels)
         return cv2_out_channels
 

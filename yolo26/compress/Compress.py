@@ -1,5 +1,6 @@
 from compress import GM
 import torch.nn.utils.prune as prune
+import os
 import time
 import torch.nn as nn
 import torch
@@ -9,7 +10,7 @@ from ultralytics import YOLO
 
 
 class PruneHandler():
-    def __init__(self, model, compression_ratio, method, cfg_output_path, prune_type='ALL'):
+    def __init__(self, model, compression_ratio, method, cfg_output_path, prune_type='ALL', align=8):
         self.model = model
         self.ckpt = model.ckpt['model']
         self.model.cpu()
@@ -19,6 +20,23 @@ class PruneHandler():
         self.model.to('cpu')  # cuda cannot convert to numpy
         self.remain_index_out = {}
         self.prune_type = prune_type
+        # 남기는 채널 수를 항상 align 의 배수로 맞춘다(양자화/NPU 커널 정렬 안정화).
+        # align=1 이면 정렬 없이 기존처럼 비율만 적용.
+        self.align = max(1, int(align))
+
+    def _amt(self, module):
+        """이 conv 에서 잘라낼 output 채널 개수(int)를 반환.
+
+        남길 채널 수 keep 을 self.align 의 배수로 반올림해, 프루닝 후 채널이
+        항상 정렬된 값(예: 8의 배수)이 되도록 한다. torch 의 ln_structured /
+        GMStructured 모두 amount 가 int 면 '자를 채널 개수'로 해석한다.
+        """
+        num = module.weight.shape[0]
+        keep = int(round(num * (1.0 - self.cr) / self.align)) * self.align
+        keep = max(self.align, keep)   # 최소 한 그룹은 남김
+        keep = min(keep, num)          # num 초과 방지
+        keep = max(1, keep)            # 최소 1채널 보장(아주 작은 conv 보호)
+        return max(0, num - keep)
 
     def prune(self):
         backbone_layers = [str(i) for i in range(11)]
@@ -32,7 +50,7 @@ class PruneHandler():
                 for name, module in self.model.model.model.named_modules():
                     if not in_layers(name, detect_layers):
                         if isinstance(module, nn.Conv2d):
-                            GM.gm_structured(module, name='weight', amount=self.cr, dim=0)
+                            GM.gm_structured(module, name='weight', amount=self._amt(module), dim=0)
                             mask = torch.where(torch.norm(module.weight_mask, 1, dim=(1, 2, 3)) != 0, 1, 0)
                             prune.remove(module, 'weight')
                         if isinstance(module, nn.BatchNorm2d):
@@ -44,7 +62,7 @@ class PruneHandler():
                 for name, module in self.model.model.model.named_modules():
                     if not in_layers(name, backbone_layers + detect_layers):
                         if isinstance(module, torch.nn.Conv2d):
-                            GM.gm_structured(module, name='weight', amount=self.cr, dim=0)
+                            GM.gm_structured(module, name='weight', amount=self._amt(module), dim=0)
                             mask = torch.where(torch.norm(module.weight_mask, 1, dim=(1, 2, 3)) != 0, 1, 0)
                             prune.remove(module, 'weight')
                         elif isinstance(module, torch.nn.BatchNorm2d):
@@ -56,7 +74,7 @@ class PruneHandler():
                 for name, module in self.model.model.model.named_modules():
                     if in_layers(name, backbone_layers):
                         if isinstance(module, torch.nn.Conv2d):
-                            GM.gm_structured(module, name='weight', amount=self.cr, dim=0)
+                            GM.gm_structured(module, name='weight', amount=self._amt(module), dim=0)
                             mask = torch.where(torch.norm(module.weight_mask, 1, dim=(1, 2, 3)) != 0, 1, 0)
                             prune.remove(module, 'weight')
                         elif isinstance(module, torch.nn.BatchNorm2d):
@@ -70,7 +88,7 @@ class PruneHandler():
                 for name, module in self.model.model.model.named_modules():
                     if not in_layers(name, detect_layers):
                         if isinstance(module, nn.Conv2d):
-                            prune.ln_structured(module, name='weight', amount=self.cr, n=1, dim=0)
+                            prune.ln_structured(module, name='weight', amount=self._amt(module), n=1, dim=0)
                             mask = torch.where(torch.norm(module.weight_mask, p=2, dim=(1, 2, 3)) != 0, 1, 0)
                             prune.remove(module, 'weight')
                         if isinstance(module, nn.BatchNorm2d):
@@ -82,7 +100,7 @@ class PruneHandler():
                 for name, module in self.model.model.model.named_modules():
                     if not in_layers(name, backbone_layers + detect_layers):
                         if isinstance(module, torch.nn.Conv2d):
-                            prune.ln_structured(module, name='weight', amount=self.cr, n=1, dim=0)
+                            prune.ln_structured(module, name='weight', amount=self._amt(module), n=1, dim=0)
                             mask = torch.where(torch.norm(module.weight_mask, p=2, dim=(1, 2, 3)) != 0, 1, 0)
                             prune.remove(module, 'weight')
                         elif isinstance(module, torch.nn.BatchNorm2d):
@@ -94,7 +112,7 @@ class PruneHandler():
                 for name, module in self.model.model.model.named_modules():
                     if in_layers(name, backbone_layers):
                         if isinstance(module, torch.nn.Conv2d):
-                            prune.ln_structured(module, name='weight', amount=self.cr, n=1, dim=0)
+                            prune.ln_structured(module, name='weight', amount=self._amt(module), n=1, dim=0)
                             mask = torch.where(torch.norm(module.weight_mask, p=2, dim=(1, 2, 3)) != 0, 1, 0)
                             prune.remove(module, 'weight')
                         elif isinstance(module, torch.nn.BatchNorm2d):
@@ -108,7 +126,7 @@ class PruneHandler():
                 for name, module in self.model.model.model.named_modules():
                     if not in_layers(name, detect_layers):
                         if isinstance(module, nn.Conv2d):
-                            prune.ln_structured(module, name='weight', amount=self.cr, n=2, dim=0)
+                            prune.ln_structured(module, name='weight', amount=self._amt(module), n=2, dim=0)
                             mask = torch.where(torch.norm(module.weight_mask, p=2, dim=(1, 2, 3)) != 0, 1, 0)
                             prune.remove(module, 'weight')
                         if isinstance(module, nn.BatchNorm2d):
@@ -120,7 +138,7 @@ class PruneHandler():
                 for name, module in self.model.model.model.named_modules():
                     if not in_layers(name, backbone_layers + detect_layers):
                         if isinstance(module, torch.nn.Conv2d):
-                            prune.ln_structured(module, name='weight', amount=self.cr, n=2, dim=0)
+                            prune.ln_structured(module, name='weight', amount=self._amt(module), n=2, dim=0)
                             mask = torch.where(torch.norm(module.weight_mask, p=2, dim=(1, 2, 3)) != 0, 1, 0)
                             prune.remove(module, 'weight')
                         elif isinstance(module, torch.nn.BatchNorm2d):
@@ -132,7 +150,7 @@ class PruneHandler():
                 for name, module in self.model.model.model.named_modules():
                     if in_layers(name, backbone_layers):
                         if isinstance(module, torch.nn.Conv2d):
-                            prune.ln_structured(module, name='weight', amount=self.cr, n=2, dim=0)
+                            prune.ln_structured(module, name='weight', amount=self._amt(module), n=2, dim=0)
                             mask = torch.where(torch.norm(module.weight_mask, p=2, dim=(1, 2, 3)) != 0, 1, 0)
                             prune.remove(module, 'weight')
                         elif isinstance(module, torch.nn.BatchNorm2d):
@@ -207,7 +225,7 @@ class PruneHandler():
         repeats = 1
         yaml_dict = {}
         detect = self.model.model.model[-1]
-        yaml_dict["nc"] = 8
+        yaml_dict["nc"] = detect.nc  # baseline/실제 학습 클래스 수를 그대로 따름 (하드코딩 8 제거)
         yaml_dict["end2end"] = detect.end2end
         yaml_dict["reg_max"] = detect.reg_max
         yaml_dict["exact_channels"] = True
@@ -251,8 +269,7 @@ class PruneHandler():
             
             elif isinstance(module, SPPF):
                 k = 5
-                c2 = module.cv2.conv.out_channels
-                c2 = max(c2, 128)
+                c2 = module.cv2.conv.out_channels  # 실제 pruned 채널 그대로 (max(.,128) 인플레이션 제거)
 
                 args = [c2, k]
                 layer = [from_, repeats, type(module).__name__, args]
@@ -260,8 +277,7 @@ class PruneHandler():
 
             
             elif isinstance(module, C2PSA):
-                c2 = module.cv2.conv.out_channels
-                c2 = max(c2, 128)
+                c2 = module.cv2.conv.out_channels  # 실제 pruned 채널 그대로 (max(.,128) 인플레이션 제거)
 
                 args = [c2]
                 layer = [from_, len(module.m), type(module).__name__, args]
@@ -296,6 +312,7 @@ class PruneHandler():
     def compress_yolo26(self):
         print('Pruning...')
         start = time.time()
+        os.makedirs(self.cfg_output_path, exist_ok=True)  # 출력 폴더 자동 생성
         self.prune()
         self.reconstruct()
         self.model_to_yaml()

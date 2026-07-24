@@ -14,7 +14,8 @@ class GMStructured(prune.BasePruningMethod):
         self.amount = amount
         self.dim = dim
 
-    def compute_mask(self, t, default_mask):
+    def compute_mask(self, t, default_mask, **kwargs):
+        # torch>=2.x 의 prune.apply() 는 compute_mask(..., module_name=...) 를 넘김 → **kwargs 로 수용
         r"""Computes and returns a mask for the input tensor ``t``.
                 Starting from a base ``default_mask`` (which should be a mask of ones
                 if the tensor has not been pruned yet), generate a mask to apply on
@@ -57,13 +58,13 @@ class GMStructured(prune.BasePruningMethod):
         t_2d = t.view(t.size()[0], -1)
         similar_matrix = distance.cdist(t_2d.detach().numpy(), t_2d.detach().numpy(), 'euclidean')
         similar_sum = np.sum(np.abs(similar_matrix), axis=0)
-        tensor_sort = torch.tensor(similar_sum.argsort())
 
-        # largest=True --> top k; largest=False --> bottom k
-        # Keep the largest k channels along dim=self.dim
-        topk = torch.topk(tensor_sort, k=nparams_tokeep, largest=True)
-
-        # topk will have .indices and .values
+        # FPGM: similar_sum 이 작을수록 geometric median 에 가까운 "중복" 필터 → 제거 대상.
+        # 오름차순(가까운→먼)으로 정렬해 앞쪽 nparams_toprune 개를 버리고,
+        # 먼 쪽 nparams_tokeep 개(고유 정보)를 남긴다.
+        # (이전 코드는 argsort 결과에 다시 topk.indices 를 취해 사실상 무작위 선택이 되는 버그였음)
+        sorted_idx = np.argsort(similar_sum)
+        keep_idx = torch.tensor(sorted_idx[nparams_toprune:].copy(), dtype=torch.long)
 
         # Compute binary mask by initializing it to all 0s and then filling in
         # 1s wherever topk.indices indicates, along self.dim.
@@ -84,7 +85,7 @@ class GMStructured(prune.BasePruningMethod):
         if nparams_toprune == 0:  # k=0 not supported by torch.kthvalue
             mask = default_mask
         else:
-            mask = make_mask(t, self.dim, topk.indices)
+            mask = make_mask(t, self.dim, keep_idx)
             mask *= default_mask.to(dtype=mask.dtype)
         return mask
 
