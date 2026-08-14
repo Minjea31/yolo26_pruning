@@ -38,6 +38,7 @@ tensorboard/
 
 # Model weights and exports
 *.pt
+*.yaml
 *.pth
 *.ckpt
 *.onnx

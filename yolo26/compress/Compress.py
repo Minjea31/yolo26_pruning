@@ -220,6 +220,41 @@ class PruneHandler():
                     concat['10'][0] = [x + concat['20'][1] for x in concat['10'][0]]
                     remain_out_channels = concat['20'][0] + concat['10'][0]
 
+    def _exact_channel_cfg(self, module, attrs=None):
+        modules = dict(module.named_modules())
+        conv = {}
+        conv2d = {}
+
+        for name, submodule in module.named_modules():
+            if isinstance(submodule, Conv):
+                conv[name or "_self"] = [
+                    int(submodule.conv.in_channels),
+                    int(submodule.conv.out_channels),
+                    int(submodule.conv.groups),
+                ]
+
+        for name, submodule in module.named_modules():
+            if not isinstance(submodule, nn.Conv2d):
+                continue
+            parent_name = name.rsplit(".", 1)[0] if "." in name else ""
+            parent = modules.get(parent_name, module)
+            if isinstance(parent, Conv) and name.endswith(".conv"):
+                continue
+            conv2d[name] = [
+                int(submodule.in_channels),
+                int(submodule.out_channels),
+                int(submodule.groups),
+            ]
+
+        cfg = {"exact": True}
+        if attrs:
+            cfg["attrs"] = {k: int(v) if isinstance(v, (int, bool)) else v for k, v in attrs.items()}
+        if conv:
+            cfg["conv"] = conv
+        if conv2d:
+            cfg["conv2d"] = conv2d
+        return cfg
+
     def model_to_yaml(self):
         from_ = -1
         repeats = 1
@@ -233,7 +268,7 @@ class PruneHandler():
         yaml_dict["backbone"] = []
         yaml_dict["head"] = []
 
-        for name, module in self.model.ckpt['model'].model.named_modules():
+        for name, module in self.model.model.model.named_modules():
             if isinstance(module, Conv):
                 if name in ['0', '1', '3', '5', '7', '17', '20']:
                     args = [module.conv.out_channels, module.conv.kernel_size[0], module.conv.stride[0]]
@@ -257,9 +292,13 @@ class PruneHandler():
                 else:
                     c3k = True
                     e = 0.5               
-                args = [module.cv2.conv.out_channels, c3k, e]
-                if attn:
-                    args.append(True)
+                args = [
+                    module.cv2.conv.out_channels,
+                    c3k,
+                    e,
+                    attn,
+                    self._exact_channel_cfg(module, {"c": module.c}),
+                ]
                 layer = [from_, len(module.m), type(module).__name__, args]
                 if name in ['13', '16', '19', '22']:
                     yaml_dict["head"].append(layer)
@@ -268,10 +307,10 @@ class PruneHandler():
 
             
             elif isinstance(module, SPPF):
-                k = 5
+                k = module.k
                 c2 = module.cv2.conv.out_channels  # 실제 pruned 채널 그대로 (max(.,128) 인플레이션 제거)
 
-                args = [c2, k]
+                args = [c2, k, module.n, module.shortcut, self._exact_channel_cfg(module)]
                 layer = [from_, repeats, type(module).__name__, args]
                 yaml_dict["backbone"].append(layer)
 
@@ -279,12 +318,12 @@ class PruneHandler():
             elif isinstance(module, C2PSA):
                 c2 = module.cv2.conv.out_channels  # 실제 pruned 채널 그대로 (max(.,128) 인플레이션 제거)
 
-                args = [c2]
+                args = [c2, module.e, self._exact_channel_cfg(module, {"c": module.c})]
                 layer = [from_, len(module.m), type(module).__name__, args]
                 yaml_dict["backbone"].append(layer)
 
             elif isinstance(module, Detect):
-                args = [yaml_dict["nc"]]
+                args = [yaml_dict["nc"], self._exact_channel_cfg(module)]
                 layer = [[16, 19, 22], repeats, type(module).__name__, args]
                 yaml_dict["head"].append(layer)
 
@@ -305,7 +344,12 @@ class PruneHandler():
                 args = ['None', module.scale_factor, module.mode]
                 layer = [from_, repeats, "nn." + type(module).__name__, args]
                 yaml_dict["head"].append(layer)
-        yaml_str = yaml.dump(yaml_dict)
+
+        self.model.model.yaml = yaml_dict
+        if self.model.ckpt and isinstance(self.model.ckpt.get("model"), nn.Module):
+            self.model.ckpt["model"].yaml = yaml_dict
+
+        yaml_str = yaml.safe_dump(yaml_dict, sort_keys=False, allow_unicode=True)
         with open(f'./{self.cfg_output_path}/best_model_prune.yaml', "w") as file:
             file.write(yaml_str)
 

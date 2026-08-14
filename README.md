@@ -22,6 +22,7 @@ Ultralytics 기반 YOLO26 모델에 채널/구조적 pruning을 적용하고, �
 
 ```bash
 cd yolo26
+conda create -n yolo26 python=3.10 -y
 pip install -r requirements.txt
 pip install polars
 pip install -e .

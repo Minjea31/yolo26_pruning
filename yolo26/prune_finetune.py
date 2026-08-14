@@ -5,19 +5,19 @@ from pathlib import Path
 import math
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--bmodel', type=str, default='/home/a/hackathon_ws/src/yolo_ws/models/baseline.pt')
+parser.add_argument('--bmodel', type=str, default='/home/a/yolo26_pruning/best.pt')
 parser.add_argument('--pruning_ratio', type=float, default='0.5') # 몇 %를 자를건지
 parser.add_argument('--prune_type', type=str, default='ALL', help="H or B or ALL")
 parser.add_argument('--method', type=str, default='GM', help="L1 or L2 or GM")
 parser.add_argument('--cfg_output_path', type=str, default='prune')
-parser.add_argument('--epoch', type=int, default=600)
+parser.add_argument('--epoch', type=int, default=100)
 parser.add_argument('--name', type=str, default='prune_model')
 parser.add_argument('--bs', type=int, default=4)
 parser.add_argument('--resume_path', type=str)
 parser.add_argument('--align', type=int, default=8,
                     help="남길 채널 수를 이 값의 배수로 맞춤(양자화/NPU 정렬용). 1이면 정렬 없음.")
 parser.add_argument("--device", type=str, default='0')
-parser.add_argument('--data', type=str, default=str(Path(__file__).resolve().parents[1] / 'hackathon.yaml'))
+parser.add_argument('--data', type=str, default=str(Path(__file__).resolve().parents[1] / 'dataset.yaml'))
 
 args = parser.parse_args()
 project_dir = Path(__file__).resolve().parent / "checkpoints"
